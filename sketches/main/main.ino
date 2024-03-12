@@ -12,6 +12,8 @@
 #define SHT_LOX3 7
 #define SHT_LOX4 8
 
+#define pi 3.14159265358979
+
 Adafruit_VL53L0X lox1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox3 = Adafruit_VL53L0X();
@@ -22,33 +24,149 @@ TOF tof2(SHT_LOX2, LOX2_ADDRESS, &lox2);
 TOF tof3(SHT_LOX3, LOX3_ADDRESS, &lox3);
 TOF tof4(SHT_LOX4, LOX4_ADDRESS, &lox4);
 
+MOTOR rightMotor(22, 23, 10);
+MOTOR leftMotor(24, 25, 9);
+//MOTOR_CONTROL motorController(leftMotor, rightMotor, 50);
+//ENCODER leftEncoder(3);
+//ENCODER rightEncoder(2);
+
 int timeSinceLastReading = 0;
 
+
+
+
+
+
+#define EPSILON 0.00001  // To handle potential division by zero
+
+float closestPointOnLine(float x1, float y1, float x2, float y2, float px, float py) {
+  // Calculate line slope and y-intercept (if not vertical)
+  float a, b;
+  if (abs(x2 - x1) < EPSILON) {
+    // Line is vertical, closest point is simply the y coordinate of the point
+    a = INFINITY;
+    b = x1;
+  } else {
+    a = (y2 - y1) / (x2 - x1);
+    b = y1 - a * x1;
+  }
+
+  // Project the point (px, py) onto the line
+  float pxProj = (a * px + py - b) / (a * a + 1);
+  float pyProj;
+  
+  // Check if projection falls on the line segment
+  if (pxProj < x1 - EPSILON || pxProj > x2 + EPSILON) {
+    // Projection falls outside the line segment, check which endpoint is closer
+    float d1 = sqrt(square(px - x1) + square(py - y1));
+    float d2 = sqrt(square(px - x2) + square(py - y2));
+    return (d1 < d2) ? y1 : y2;
+  } else {
+    pyProj = a * pxProj + b;
+  }
+
+  return pyProj;
+}
+
+float square(float x) {
+  return x * x;
+}
+
+
+
+
+
+
+#define SENSOR_DIST 150 
+#define MIDPOINTX 115
+#define MIDPOINTY -100
+#define MAX_ANGLE 10.0
+#define WHEEL_SMOOTHING 3.0
+#define DESIRED_DISTANCE 100
+#define SMOOTHING_START_DISTANCE_MM 80
+float currentMaxAngle = MAX_ANGLE;
+#define TURNING_CONSTANT_PRIMARY 240
+#define TURNING_CONSTANT_SECONDARY 100
+
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
 
   // wait until serial port opens for native USB devices
   while (! Serial) { delay(1); }
 
   Serial.println("\n\n======== CODE BEGIN =======\n");
-  Serial.println(F("Device init.\n"));
 
-  tof1.initTOF(); 
-  tof2.initTOF(); 
-  tof3.initTOF(); 
-  tof4.initTOF();
+  tof1.initTOF(); // right
+  tof2.initTOF(); // front
+  tof3.initTOF(); // left front B
+  tof4.initTOF(); // left back A
 
-  Serial.println(F("\nAll VL53L0X initalized.\n"));
+  Serial.println("\nAll VL53L0X initalized.\n");
+
+  
+}
+
+float getang(float y1, float y2, float dist) {
+  float rise = (y1-y2)/dist;
+  return atan(rise) * (180.0/pi);
+}
+
+void turnRight() {
+  leftMotor.setSpeed(250, true);
+  rightMotor.setSpeed(100, true);
+  Serial.print("left: ");
+}
+
+void turnLeft() {
+  rightMotor.setSpeed(250, true);
+  leftMotor.setSpeed(100, true);
+  Serial.print("right: ");
 }
 
 void loop() {
-  timeSinceLastReading = millis();
-  Serial.print("Right Side:" + String(tof1.readTOF()));
-  Serial.print(" Front:" + String(tof2.readTOF()));
-  Serial.print(" Left Front:" + String(tof3.readTOF()));
-  Serial.print(" Left Back:" + String(tof4.readTOF()));
-//  tof1.readTOF();tof2.readTOF();tof3.readTOF();tof4.readTOF();
-  float readingTime = (millis() - timeSinceLastReading) * 0.001;
-  Serial.print(" This took: " + String(readingTime));
-  Serial.println(" We can do this " + String(1/readingTime) + " times a second.");
+//  Serial.print("LeftEncoder: ");
+//  Serial.print(leftEncoder.getValue());
+//  Serial.print(" RightEncoder: ");
+//  Serial.print(rightEncoder.getValue());
+
+  float tof4val = tof4.readTOF();
+  float tof3val = tof3.readTOF();
+
+//  Serial.print("B: ");
+//  Serial.print(tof3val);
+//  Serial.print(" A: ");
+//  Serial.print(tof4val);
+
+  float closestY = closestPointOnLine(0, tof4val, SENSOR_DIST, tof3val, MIDPOINTX, MIDPOINTY);
+  Serial.print(" Closest point on line Y: ");
+  Serial.print(closestY);
+
+  // get angle
+  float wallAngle = getang(tof4val, tof3val, SENSOR_DIST);
+  bool turningTowards = wallAngle > 0;
+  bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
+  Serial.print(" Angle: ");
+  Serial.println(wallAngle);
+  
+  currentMaxAngle = MAX_ANGLE * (abs(closestY - DESIRED_DISTANCE) / SMOOTHING_START_DISTANCE_MM);
+  if (currentMaxAngle > MAX_ANGLE) currentMaxAngle = MAX_ANGLE;
+  Serial.println(LeftOfDesiredDistance);
+  Serial.println(currentMaxAngle);
+  
+  // DECISIONS
+  if (abs(wallAngle) >= currentMaxAngle) {
+    if (turningTowards) {
+      turnRight();
+    } else {
+      turnLeft();
+    }
+  } else if (LeftOfDesiredDistance) {
+    turnRight();
+  } else {
+    turnLeft();
+  }
+  // END OF DECISIONS
+
+//  leftMotor.setSpeed(TURNING_CONSTANT_PRIMARY, true);
+//  rightMotor.setSpeed(TURNING_CONSTANT_SECONDARY, true);
 }

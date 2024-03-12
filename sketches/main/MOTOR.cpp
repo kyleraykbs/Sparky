@@ -1,6 +1,24 @@
 #include "HardwareSerial.h"
 #include "MOTOR.h"
 
+ENCODER::ENCODER(int inputPin) {
+  pinMode(inputPin, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(inputPin), tick, CHANGE);
+
+  tickPin = inputPin;
+}
+
+static void ENCODER::tick() { 
+  total_ticks += 1;
+}
+
+static long ENCODER::total_ticks = 0;
+
+long ENCODER::getValue() {
+  return total_ticks;
+}
+
 MOTOR::MOTOR(int inputDirPin1, int inputDirPin2, int inputEnablePin) {
   pinMode(inputDirPin1, OUTPUT);
   pinMode(inputDirPin2, OUTPUT);
@@ -17,6 +35,8 @@ MOTOR::MOTOR(int inputDirPin1, int inputDirPin2, int inputEnablePin) {
 
 //direction: true forwards, false backwards
 void MOTOR::setSpeed(int speed, bool direction) {
+    if (speed == currentSpeed) return;
+  
     // ensure speed is within bounds
     if (speed > ANALOG_MAX) speed = ANALOG_MAX;
     else if(speed < ANALOG_MIN) speed = ANALOG_MIN;
@@ -31,11 +51,11 @@ void MOTOR::setSpeed(int speed, bool direction) {
     }
 
     // give the motor a spike to start if needed
-    if (currentSpeed == 0) {
-      analogWrite(enablePin, ANALOG_START);
-      delay(ANALOG_START_TIME);
-    } 
-  
+//    if (currentSpeed == 0 || (speed > 0 && speed < 150)) {
+//      analogWrite(enablePin, ANALOG_START);
+//      delay(ANALOG_START_TIME);
+//    } 
+ 
     // write speed
     currentSpeed = speed;
     Serial.println(currentSpeed);
