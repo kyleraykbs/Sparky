@@ -83,7 +83,7 @@ float square(float x) {
 #define MAX_ANGLE 10.0
 #define WHEEL_SMOOTHING 3.0
 #define DESIRED_DISTANCE 100
-#define SMOOTHING_START_DISTANCE_MM 80
+int SMOOTHING_START_DISTANCE_MM = DESIRED_DISTANCE / 1.25;
 float currentMaxAngle = MAX_ANGLE;
 #define TURNING_CONSTANT_PRIMARY 240
 #define TURNING_CONSTANT_SECONDARY 100
@@ -111,16 +111,18 @@ float getang(float y1, float y2, float dist) {
   return atan(rise) * (180.0/pi);
 }
 
-void turnRight() {
+void turnRight(float smoothing) {
   leftMotor.setSpeed(250, true);
-  rightMotor.setSpeed(100, true);
+  rightMotor.setSpeed(250 - (150 * smoothing), true);
   Serial.print("left: ");
+  Serial.println(smoothing);
 }
 
-void turnLeft() {
+void turnLeft(float smoothing) {
   rightMotor.setSpeed(250, true);
-  leftMotor.setSpeed(100, true);
+  leftMotor.setSpeed(250 - (150 * smoothing), true);
   Serial.print("right: ");
+  Serial.println(smoothing);
 }
 
 void loop() {
@@ -151,19 +153,19 @@ void loop() {
   currentMaxAngle = MAX_ANGLE * (abs(closestY - DESIRED_DISTANCE) / SMOOTHING_START_DISTANCE_MM);
   if (currentMaxAngle > MAX_ANGLE) currentMaxAngle = MAX_ANGLE;
   Serial.println(LeftOfDesiredDistance);
-  Serial.println(currentMaxAngle);
+  Serial.println(currentMaxAngle / MAX_ANGLE);
   
   // DECISIONS
   if (abs(wallAngle) >= currentMaxAngle) {
     if (turningTowards) {
-      turnRight();
+      turnRight(currentMaxAngle / MAX_ANGLE);
     } else {
-      turnLeft();
+      turnLeft(currentMaxAngle / MAX_ANGLE);
     }
   } else if (LeftOfDesiredDistance) {
-    turnRight();
+    turnRight(currentMaxAngle / MAX_ANGLE);
   } else {
-    turnLeft();
+    turnLeft(currentMaxAngle / MAX_ANGLE);
   }
   // END OF DECISIONS
 
