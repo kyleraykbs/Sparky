@@ -7,9 +7,9 @@
 #define LOX3_ADDRESS 0x32
 #define LOX4_ADDRESS 0x33
 
-#define SHT_LOX1 5
+#define SHT_LOX3 5
 #define SHT_LOX2 6
-#define SHT_LOX3 7
+#define SHT_LOX1 7
 #define SHT_LOX4 8
 
 #define pi 3.14159265358979
@@ -158,14 +158,14 @@ void loop() {
   // DECISIONS
   if (abs(wallAngle) >= currentMaxAngle) {
     if (turningTowards) {
-      turnRight(currentMaxAngle / MAX_ANGLE);
+      turnRight(1.0);
     } else {
-      turnLeft(currentMaxAngle / MAX_ANGLE);
+      turnLeft(1.0);
     }
   } else if (LeftOfDesiredDistance) {
-    turnRight(currentMaxAngle / MAX_ANGLE);
+    turnRight(1.0);
   } else {
-    turnLeft(currentMaxAngle / MAX_ANGLE);
+    turnLeft(1.0);
   }
   // END OF DECISIONS
 
