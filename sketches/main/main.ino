@@ -8,7 +8,7 @@
 #define LOX4_ADDRESS 0x33
 
 #define SHT_LOX3 5
-#define SHT_LOX2 6
+#define SHT_LOX2 6 
 #define SHT_LOX1 7
 #define SHT_LOX4 8
 
@@ -112,15 +112,15 @@ float getang(float y1, float y2, float dist) {
 }
 
 void turnRight(float smoothing) {
-  leftMotor.setSpeed(250, true);
-  rightMotor.setSpeed(250 - (150 * smoothing), true);
+  leftMotor.setSpeed(180, true);
+  rightMotor.setSpeed(120, true);
   Serial.print("left: ");
   Serial.println(smoothing);
 }
 
 void turnLeft(float smoothing) {
-  rightMotor.setSpeed(250, true);
-  leftMotor.setSpeed(250 - (150 * smoothing), true);
+  rightMotor.setSpeed(210, true);
+  leftMotor.setSpeed(120, true);
   Serial.print("right: ");
   Serial.println(smoothing);
 }
@@ -133,6 +133,8 @@ void loop() {
 
   float tof4val = tof4.readTOF();
   float tof3val = tof3.readTOF();
+  float tof2val = tof2.readTOF(); // front right
+  float tof1val = tof1.readTOF(); // front left
 
 //  Serial.print("B: ");
 //  Serial.print(tof3val);
@@ -162,11 +164,20 @@ void loop() {
     } else {
       turnLeft(1.0);
     }
-  } else if (LeftOfDesiredDistance) {
+  } else if (LeftOfDesiredDistan  ce) {
     turnRight(1.0);
   } else {
     turnLeft(1.0);
   }
+
+  if (tof3val >= 300) {
+    rightMotor.setSpeed(150, true);
+    leftMotor.setSpeed(0, true);
+    delay(2800);
+    rightMotor.setSpeed(150, true);
+    leftMotor.setSpeed(150, true);
+    delay(1200);
+  };
   // END OF DECISIONS
 
 //  leftMotor.setSpeed(TURNING_CONSTANT_PRIMARY, true);
