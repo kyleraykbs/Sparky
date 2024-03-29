@@ -112,18 +112,31 @@ float getang(float y1, float y2, float dist) {
 }
 
 void turnRight(float smoothing) {
-  leftMotor.setSpeed(180, true);
-  rightMotor.setSpeed(120, true);
+  leftMotor.setSpeed(165, true);
+  rightMotor.setSpeed(110, true);
   Serial.print("left: ");
   Serial.println(smoothing);
 }
 
 void turnLeft(float smoothing) {
-  rightMotor.setSpeed(210, true);
-  leftMotor.setSpeed(120, true);
+  rightMotor.setSpeed(190, true);
+  leftMotor.setSpeed(110, true);
   Serial.print("right: ");
   Serial.println(smoothing);
 }
+
+// Turn routine vars
+bool postTurnWallFindRoutine = false;
+int minWallFindDistance = 100;
+int millisAtTurnStart;
+bool frontLeftFound = false;
+void resetTurnVars() {
+  postTurnWallFindRoutine = false;
+  minWallFindDistance = 160;
+  millisAtTurnStart = 0;
+  frontLeftFound = false;
+}
+//
 
 void loop() {
 //  Serial.print("LeftEncoder: ");
@@ -131,10 +144,10 @@ void loop() {
 //  Serial.print(" RightEncoder: ");
 //  Serial.print(rightEncoder.getValue());
 
-  float tof4val = tof4.readTOF();
-  float tof3val = tof3.readTOF();
-  float tof2val = tof2.readTOF(); // front right
-  float tof1val = tof1.readTOF(); // front left
+  float tof4val = tof4.readTOF(); // Back left
+  float tof3val = tof3.readTOF(); // Front left
+//  float tof2val = tof2.readTOF(); // front right
+//  float tof1val = tof1.readTOF(); // front left
 
 //  Serial.print("B: ");
 //  Serial.print(tof3val);
@@ -158,25 +171,50 @@ void loop() {
   Serial.println(currentMaxAngle / MAX_ANGLE);
   
   // DECISIONS
-  if (abs(wallAngle) >= currentMaxAngle) {
+  if (!postTurnWallFindRoutine && (abs(wallAngle) >= currentMaxAngle)) {
     if (turningTowards) {
       turnRight(1.0);
     } else {
       turnLeft(1.0);
     }
-  } else if (LeftOfDesiredDistan  ce) {
+  } else if (LeftOfDesiredDistance) {
     turnRight(1.0);
   } else {
     turnLeft(1.0);
   }
 
+  // PostWall Find
+  if (postTurnWallFindRoutine && !frontLeftFound) {
+    rightMotor.setSpeed(150, true);
+    leftMotor.setSpeed(150, true);
+    if ((millisAtTurnStart - millis()) <= 1200) {
+      if (tof3val <= minWallFindDistance) {
+        frontLeftFound = true;
+      }
+    } else {
+      resetTurnVars(); // Revert to regular logic so we can try and make another turn.
+    }
+  }
+  if (frontLeftFound) {
+    if (tof4val <= minWallFindDistance) {
+      resetTurnVars(); // return to regualar logic and follow wall.
+    }
+    if (tof3val < DESIRED_DISTANCE) {
+      turnRight(1.0);
+    } else {
+      turnLeft(1.0);
+    }
+  }
+  
   if (tof3val >= 300) {
     rightMotor.setSpeed(150, true);
     leftMotor.setSpeed(0, true);
-    delay(2800);
+    delay(3000);
     rightMotor.setSpeed(150, true);
     leftMotor.setSpeed(150, true);
-    delay(1200);
+    delay(1300);
+    postTurnWallFindRoutine = true;
+    millisAtTurnStart = millis();
   };
   // END OF DECISIONS
 
