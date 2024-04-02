@@ -58,7 +58,6 @@ void MOTOR::setSpeed(int speed, bool direction) {
  
     // write speed
     currentSpeed = speed;
-    Serial.println(currentSpeed);
     analogWrite(enablePin, speed);
 }
 

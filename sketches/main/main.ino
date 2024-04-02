@@ -7,25 +7,24 @@
 #define LOX3_ADDRESS 0x32
 #define LOX4_ADDRESS 0x33
 
-#define SHT_LOX3 5
-#define SHT_LOX2 6 
-#define SHT_LOX1 7
-#define SHT_LOX4 8
+#define SHT_LOX3 26
+#define SHT_LOX2 24
+#define SHT_LOX1 22
 
 #define pi 3.14159265358979
+
+#define generalSpeed 180
 
 Adafruit_VL53L0X lox1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox3 = Adafruit_VL53L0X();
-Adafruit_VL53L0X lox4 = Adafruit_VL53L0X();
 
 TOF tof1(SHT_LOX1, LOX1_ADDRESS, &lox1);
 TOF tof2(SHT_LOX2, LOX2_ADDRESS, &lox2);
 TOF tof3(SHT_LOX3, LOX3_ADDRESS, &lox3);
-TOF tof4(SHT_LOX4, LOX4_ADDRESS, &lox4);
 
-MOTOR rightMotor(22, 23, 10);
-MOTOR leftMotor(24, 25, 9);
+MOTOR leftMotor(11, 12, 13);
+MOTOR rightMotor(8, 9, 10);
 //MOTOR_CONTROL motorController(leftMotor, rightMotor, 50);
 //ENCODER leftEncoder(3);
 //ENCODER rightEncoder(2);
@@ -77,12 +76,12 @@ float square(float x) {
 
 
 
-#define SENSOR_DIST 150 
+#define SENSOR_DIST 150
 #define MIDPOINTX 115
 #define MIDPOINTY -100
-#define MAX_ANGLE 10.0
+#define MAX_ANGLE 12.0
 #define WHEEL_SMOOTHING 3.0
-#define DESIRED_DISTANCE 100
+#define DESIRED_DISTANCE 130
 int SMOOTHING_START_DISTANCE_MM = DESIRED_DISTANCE / 1.25;
 float currentMaxAngle = MAX_ANGLE;
 #define TURNING_CONSTANT_PRIMARY 240
@@ -96,10 +95,9 @@ void setup() {
 
   Serial.println("\n\n======== CODE BEGIN =======\n");
 
-  tof1.initTOF(); // right
+  tof1.initTOF(); // left front
   tof2.initTOF(); // front
-  tof3.initTOF(); // left front B
-  tof4.initTOF(); // left back A
+  tof3.initTOF(); // left back
 
   Serial.println("\nAll VL53L0X initalized.\n");
 
@@ -112,17 +110,13 @@ float getang(float y1, float y2, float dist) {
 }
 
 void turnRight(float smoothing) {
-  leftMotor.setSpeed(165, true);
-  rightMotor.setSpeed(110, true);
-  Serial.print("left: ");
-  Serial.println(smoothing);
+  leftMotor.setSpeed(250, true);
+  rightMotor.setSpeed(100, true);
 }
 
 void turnLeft(float smoothing) {
-  rightMotor.setSpeed(190, true);
-  leftMotor.setSpeed(110, true);
-  Serial.print("right: ");
-  Serial.println(smoothing);
+  rightMotor.setSpeed(250, true);
+  leftMotor.setSpeed(100, true);
 }
 
 // Turn routine vars
@@ -136,42 +130,57 @@ void resetTurnVars() {
   millisAtTurnStart = 0;
   frontLeftFound = false;
 }
-//
+bool rightTurnSensorCheckStart = false;
+
+
+//TofTimings
+float backtof;
+float fronttof;
+float frontfronttof;
+
+int lastBadDataFromFront = -5000;
+int lastBadDataFromLeft = -5000;
+
+#define badDataTimeoutMS 1000
 
 void loop() {
-//  Serial.print("LeftEncoder: ");
-//  Serial.print(leftEncoder.getValue());
-//  Serial.print(" RightEncoder: ");
-//  Serial.print(rightEncoder.getValue());
+//  rightMotor.setSpeed(250, true);
+//  leftMotor.setSpeed(250, true);
+//  return;
 
-  float tof4val = tof4.readTOF(); // Back left
-  float tof3val = tof3.readTOF(); // Front left
-//  float tof2val = tof2.readTOF(); // front right
-//  float tof1val = tof1.readTOF(); // front left
+  backtof = tof3.readTOF(); // Back left
+  fronttof = tof2.readTOF(); // Front left
+  frontfronttof = tof1.readTOF(); // front right 
 
-//  Serial.print("B: ");
-//  Serial.print(tof3val);
-//  Serial.print(" A: ");
-//  Serial.print(tof4val);
 
-  float closestY = closestPointOnLine(0, tof4val, SENSOR_DIST, tof3val, MIDPOINTX, MIDPOINTY);
-  Serial.print(" Closest point on line Y: ");
-  Serial.print(closestY);
+  // Filter out bad tof data
+  if (frontfronttof >= 8000) {
+    lastBadDataFromFront = millis();
+  }
+  if (fronttof >= 8000) {
+    lastBadDataFromLeft = millis();
+  }
+  if ((millis() - lastBadDataFromLeft) <= badDataTimeoutMS) {
+    fronttof = 7000;
+  }
+  if ((millis() - lastBadDataFromFront) <= badDataTimeoutMS) {
+    frontfronttof = 7000;
+  }
+
+//  Serial.println(frontfronttof);
+
+  float closestY = closestPointOnLine(0, backtof, SENSOR_DIST, fronttof, MIDPOINTX, MIDPOINTY);
 
   // get angle
-  float wallAngle = getang(tof4val, tof3val, SENSOR_DIST);
+  float wallAngle = getang(backtof, fronttof, SENSOR_DIST);
   bool turningTowards = wallAngle > 0;
   bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
-  Serial.print(" Angle: ");
-  Serial.println(wallAngle);
   
   currentMaxAngle = MAX_ANGLE * (abs(closestY - DESIRED_DISTANCE) / SMOOTHING_START_DISTANCE_MM);
   if (currentMaxAngle > MAX_ANGLE) currentMaxAngle = MAX_ANGLE;
-  Serial.println(LeftOfDesiredDistance);
-  Serial.println(currentMaxAngle / MAX_ANGLE);
   
   // DECISIONS
-  if (!postTurnWallFindRoutine && (abs(wallAngle) >= currentMaxAngle)) {
+  if (!postTurnWallFindRoutine && !rightTurnSensorCheckStart && (abs(wallAngle) >= currentMaxAngle)) {
     if (turningTowards) {
       turnRight(1.0);
     } else {
@@ -184,11 +193,11 @@ void loop() {
   }
 
   // PostWall Find
-  if (postTurnWallFindRoutine && !frontLeftFound) {
-    rightMotor.setSpeed(150, true);
-    leftMotor.setSpeed(150, true);
-    if ((millisAtTurnStart - millis()) <= 1200) {
-      if (tof3val <= minWallFindDistance) {
+  if (postTurnWallFindRoutine && !frontLeftFound && !rightTurnSensorCheckStart) {
+    rightMotor.setSpeed(generalSpeed, true);
+    leftMotor.setSpeed(generalSpeed, true);
+    if ((millisAtTurnStart - millis()) <= 1900) {
+      if (fronttof <= minWallFindDistance) {
         frontLeftFound = true;
       }
     } else {
@@ -196,28 +205,54 @@ void loop() {
     }
   }
   if (frontLeftFound) {
-    if (tof4val <= minWallFindDistance) {
+    if (backtof <= minWallFindDistance) {
       resetTurnVars(); // return to regualar logic and follow wall.
     }
-    if (tof3val < DESIRED_DISTANCE) {
+    if (fronttof < DESIRED_DISTANCE) {
       turnRight(1.0);
     } else {
       turnLeft(1.0);
     }
   }
-  
-  if (tof3val >= 300) {
-    rightMotor.setSpeed(150, true);
+
+  // LEFT TURN INITALIZER
+  if ((fronttof >= 420) && (!rightTurnSensorCheckStart && !postTurnWallFindRoutine)) {
+
+    rightMotor.setSpeed(generalSpeed, true);
     leftMotor.setSpeed(0, true);
-    delay(3000);
-    rightMotor.setSpeed(150, true);
-    leftMotor.setSpeed(150, true);
-    delay(1300);
+    delay(2600);
+    rightMotor.setSpeed(250, true);
+    leftMotor.setSpeed(250, true);
+    delay(70);
+
+    rightMotor.setSpeed(generalSpeed, true);
+    leftMotor.setSpeed(generalSpeed, true);
+    delay(1520);
     postTurnWallFindRoutine = true;
     millisAtTurnStart = millis();
   };
-  // END OF DECISIONS
 
-//  leftMotor.setSpeed(TURNING_CONSTANT_PRIMARY, true);
-//  rightMotor.setSpeed(TURNING_CONSTANT_SECONDARY, true);
+  // RIGHT TURN INITALIZER
+  if (frontfronttof <= 360 && frontfronttof > 160 && !rightTurnSensorCheckStart) {
+    fronttof = tof2.readTOF();
+    if (fronttof < 420) {
+     rightMotor.setSpeed(0, false);
+     leftMotor.setSpeed(100, true);
+     delay(4000);
+     rightTurnSensorCheckStart = true; 
+    }
+  }
+
+  if (rightTurnSensorCheckStart) {
+    if (((backtof - fronttof) <= -5)) {
+      rightTurnSensorCheckStart = false;
+      rightMotor.setSpeed(250, true);
+      leftMotor.setSpeed(250, true);
+      delay(70);
+    } else {
+      rightMotor.setSpeed(0, false);
+      leftMotor.setSpeed(100, true);
+    }
+  }
+  // END OF DECISIONS
 }
