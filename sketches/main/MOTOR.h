@@ -26,6 +26,7 @@ private:
 
 public:
     int currentSpeed = 0;
+    bool currentDir = false;
     MOTOR() = default;
     MOTOR(int inputDirPin1, int inputDirPin2, int inputEnablePin);
     void setSpeed(int speed, bool direction);

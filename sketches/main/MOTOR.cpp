@@ -35,11 +35,13 @@ MOTOR::MOTOR(int inputDirPin1, int inputDirPin2, int inputEnablePin) {
 
 //direction: true forwards, false backwards
 void MOTOR::setSpeed(int speed, bool direction) {
-    if (speed == currentSpeed) return;
+    if (speed == currentSpeed && direction == currentDir) return;
   
     // ensure speed is within bounds
     if (speed > ANALOG_MAX) speed = ANALOG_MAX;
     else if(speed < ANALOG_MIN) speed = ANALOG_MIN;
+
+    currentDir = direction;
 
     // set direction pins
     if (direction) {
@@ -54,7 +56,7 @@ void MOTOR::setSpeed(int speed, bool direction) {
 //    if (currentSpeed == 0 || (speed > 0 && speed < 150)) {
 //      analogWrite(enablePin, ANALOG_START);
 //      delay(ANALOG_START_TIME);
-//    } 
+//    }
  
     // write speed
     currentSpeed = speed;

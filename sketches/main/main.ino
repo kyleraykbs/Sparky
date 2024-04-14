@@ -13,8 +13,6 @@
 
 #define pi 3.14159265358979
 
-#define generalSpeed 180
-
 Adafruit_VL53L0X lox1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox3 = Adafruit_VL53L0X();
@@ -23,19 +21,13 @@ TOF tof1(SHT_LOX1, LOX1_ADDRESS, &lox1);
 TOF tof2(SHT_LOX2, LOX2_ADDRESS, &lox2);
 TOF tof3(SHT_LOX3, LOX3_ADDRESS, &lox3);
 
-MOTOR leftMotor(11, 12, 13);
-MOTOR rightMotor(8, 9, 10);
+MOTOR leftMotor(12, 11, 13);
+MOTOR rightMotor(9, 8, 10);
 //MOTOR_CONTROL motorController(leftMotor, rightMotor, 50);
 //ENCODER leftEncoder(3);
 //ENCODER rightEncoder(2);
 
 int timeSinceLastReading = 0;
-
-
-
-
-
-
 #define EPSILON 0.00001  // To handle potential division by zero
 
 float closestPointOnLine(float x1, float y1, float x2, float y2, float px, float py) {
@@ -71,10 +63,10 @@ float square(float x) {
   return x * x;
 }
 
-
-
-
-
+float getang(float y1, float y2, float dist) {
+  float rise = (y1-y2)/dist;
+  return atan(rise) * (180.0/pi);
+}
 
 #define SENSOR_DIST 150
 #define MIDPOINTX 115
@@ -88,6 +80,10 @@ float currentMaxAngle = MAX_ANGLE;
 #define TURNING_CONSTANT_SECONDARY 100
 
 void setup() {
+  pinMode(40, OUTPUT); // roomled
+  pinMode(50, OUTPUT); // fireled
+  pinMode(52, OUTPUT); // fan
+  
   Serial.begin(9600);
 
   // wait until serial port opens for native USB devices
@@ -101,12 +97,9 @@ void setup() {
 
   Serial.println("\nAll VL53L0X initalized.\n");
 
-  
-}
-
-float getang(float y1, float y2, float dist) {
-  float rise = (y1-y2)/dist;
-  return atan(rise) * (180.0/pi);
+  lox1.setMeasurementTimingBudgetMicroSeconds(20000);
+  lox2.setMeasurementTimingBudgetMicroSeconds(20000);
+  lox3.setMeasurementTimingBudgetMicroSeconds(20000);
 }
 
 void turnRight(float smoothing) {
@@ -119,140 +112,182 @@ void turnLeft(float smoothing) {
   leftMotor.setSpeed(100, true);
 }
 
-// Turn routine vars
-bool postTurnWallFindRoutine = false;
-int minWallFindDistance = 100;
-int millisAtTurnStart;
-bool frontLeftFound = false;
-void resetTurnVars() {
-  postTurnWallFindRoutine = false;
-  minWallFindDistance = 160;
-  millisAtTurnStart = 0;
-  frontLeftFound = false;
-}
-bool rightTurnSensorCheckStart = false;
-
-
 //TofTimings
-float backtof;
-float fronttof;
-float frontfronttof;
+float LeftBackTOF;
+float LeftFrontTOF;
+float FrontTOF;
 
-int lastBadDataFromFront = -5000;
-int lastBadDataFromLeft = -5000;
+long lastBadDataFromFront = -5000;
+long lastBadDataFromLeft = -5000;
 
 #define badDataTimeoutMS 1000
 
+
+// ROOM DETECTION
+bool on_tape = false;
+bool in_room = false;
+
+// Turns
+bool turning = false;
+
+int left_turning_sequence = 0;
+long left_millis_tracker = 0;
+
+int right_turning_sequence = 0;
+long right_millis_tracker = 0;
+
+int start_millis = 0;
 void loop() {
-//  rightMotor.setSpeed(250, true);
-//  leftMotor.setSpeed(250, true);
-//  return;
+  // READINGS ========
+  if (start_millis == 0) { start_millis = millis(); }
+  turning = false; if (left_turning_sequence > 0 || right_turning_sequence > 0) turning = true;
 
-  backtof = tof3.readTOF(); // Back left
-  fronttof = tof2.readTOF(); // Front left
-  frontfronttof = tof1.readTOF(); // front right 
+  // FIRE SENSORS
+  int rightfirereading = analogRead(A1);
+  int leftfirereading = analogRead(A0);
 
+  // LIGHT SENSOR
+  int lightsensorreading = analogRead(A11);
+  if (lightsensorreading > 280) {
+    if (!on_tape) {
+      on_tape = true;
+      in_room = !in_room;
+    }
+  } else if (on_tape) {
+    if (lightsensorreading < 190) {
+      on_tape = false;
+    }
+  }
+  if (in_room) {
+    digitalWrite(40, HIGH);
+  } else {
+    digitalWrite(40, LOW);
+  }
 
-  // Filter out bad tof data
-  if (frontfronttof >= 8000) {
+  // TOF READINGS
+  LeftBackTOF = tof3.readTOF(); // Back left
+  LeftFrontTOF = tof2.readTOF(); // Front left
+  FrontTOF = tof1.readTOF(); // front right 
+  if (FrontTOF >= 8000) {
     lastBadDataFromFront = millis();
   }
-  if (fronttof >= 8000) {
+  if (LeftFrontTOF >= 8000) {
     lastBadDataFromLeft = millis();
   }
   if ((millis() - lastBadDataFromLeft) <= badDataTimeoutMS) {
-    fronttof = 7000;
+    LeftFrontTOF = 7000;
   }
   if ((millis() - lastBadDataFromFront) <= badDataTimeoutMS) {
-    frontfronttof = 7000;
+    FrontTOF = 7000;
   }
 
-//  Serial.println(frontfronttof);
+  // END OF READINGS ==========
 
-  float closestY = closestPointOnLine(0, backtof, SENSOR_DIST, fronttof, MIDPOINTX, MIDPOINTY);
 
-  // get angle
-  float wallAngle = getang(backtof, fronttof, SENSOR_DIST);
-  bool turningTowards = wallAngle > 0;
-  bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
+
+  // LOGIC ==========
+  // --- WALL FOLLOWING
+  if (!turning) { // Only wall follow when not doing a turn.
+    // calculate points for wall following
+    float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOF, MIDPOINTX, MIDPOINTY);
+    float wallAngle = getang(LeftBackTOF, LeftFrontTOF, SENSOR_DIST);
+    bool turningTowards = wallAngle > 0;
+    bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
+    
+    currentMaxAngle = MAX_ANGLE * (abs(closestY - DESIRED_DISTANCE) / SMOOTHING_START_DISTANCE_MM);
+    if (currentMaxAngle > MAX_ANGLE) currentMaxAngle = MAX_ANGLE;
+
   
-  currentMaxAngle = MAX_ANGLE * (abs(closestY - DESIRED_DISTANCE) / SMOOTHING_START_DISTANCE_MM);
-  if (currentMaxAngle > MAX_ANGLE) currentMaxAngle = MAX_ANGLE;
-  
-  // DECISIONS
-  if (!postTurnWallFindRoutine && !rightTurnSensorCheckStart && (abs(wallAngle) >= currentMaxAngle)) {
-    if (turningTowards) {
-      turnRight(1.0);
-    } else {
-      turnLeft(1.0);
-    }
-  } else if (LeftOfDesiredDistance) {
-    turnRight(1.0);
-  } else {
-    turnLeft(1.0);
-  }
-
-  // PostWall Find
-  if (postTurnWallFindRoutine && !frontLeftFound && !rightTurnSensorCheckStart) {
-    rightMotor.setSpeed(generalSpeed, true);
-    leftMotor.setSpeed(generalSpeed, true);
-    if ((millisAtTurnStart - millis()) <= 1900) {
-      if (fronttof <= minWallFindDistance) {
-        frontLeftFound = true;
+    if ((abs(wallAngle) >= currentMaxAngle)) {
+      if (turningTowards) {
+        turnRight(1.0);
+      } else {
+        turnLeft(1.0);
       }
-    } else {
-      resetTurnVars(); // Revert to regular logic so we can try and make another turn.
-    }
-  }
-  if (frontLeftFound) {
-    if (backtof <= minWallFindDistance) {
-      resetTurnVars(); // return to regualar logic and follow wall.
-    }
-    if (fronttof < DESIRED_DISTANCE) {
+    } else if (LeftOfDesiredDistance) {
       turnRight(1.0);
     } else {
       turnLeft(1.0);
     }
   }
 
-  // LEFT TURN INITALIZER
-  if ((fronttof >= 420) && (!rightTurnSensorCheckStart && !postTurnWallFindRoutine)) {
+  // -------------------------------------------------------------
+  // --- Left Turning --------------------------------------------
+  // -------------------------------------------------------------
 
-    rightMotor.setSpeed(generalSpeed, true);
-    leftMotor.setSpeed(0, true);
-    delay(2600);
-    rightMotor.setSpeed(250, true);
-    leftMotor.setSpeed(250, true);
-    delay(70);
+  if (right_turning_sequence == 0) {
+    // 0. Detect if we need to turn left by judging the distance of the left front sensor.
+    if (left_turning_sequence == 0) {
+      if (LeftFrontTOF >= 500) {
+        leftMotor.setSpeed(0, true);
+        rightMotor.setSpeed(160, true);
 
-    rightMotor.setSpeed(generalSpeed, true);
-    leftMotor.setSpeed(generalSpeed, true);
-    delay(1520);
-    postTurnWallFindRoutine = true;
-    millisAtTurnStart = millis();
-  };
+        left_millis_tracker = millis(); // Update the tracker with the start of our turn.
+        left_turning_sequence = 1; // move to next sequence
+      }
+    }
 
-  // RIGHT TURN INITALIZER
-  if (frontfronttof <= 360 && frontfronttof > 160 && !rightTurnSensorCheckStart) {
-    fronttof = tof2.readTOF();
-    if (fronttof < 420) {
-     rightMotor.setSpeed(0, false);
-     leftMotor.setSpeed(100, true);
-     delay(4000);
-     rightTurnSensorCheckStart = true; 
+    // Left turns will have time based progressions (WITHOUT DELAYS) to keep the rest of the loop functioning.
+    // 1. Preprogrammed turn
+    if (left_turning_sequence == 1) {
+      if (millis() - left_millis_tracker > 2200) { // Move to the next phase after we've roughly turned 90 degrees
+        leftMotor.setSpeed(250, true);
+        rightMotor.setSpeed(250, true);
+        delay(40); // Yes, this is a delay... it's short enough where it doesn't matter.
+        leftMotor.setSpeed(150, true);
+        rightMotor.setSpeed(150, true);
+
+        left_millis_tracker = millis();
+        left_turning_sequence = 2;
+      }
+    }
+
+    // 2. Search for wall with timeout (1500-2000 MS)
+    if (left_turning_sequence == 2) {
+      if (LeftFrontTOF < 450) {
+        if (LeftBackTOF < 450) {
+          left_turning_sequence = 0;
+          return; // Jump to the start of the loop so we dont instantly turn right if there is a wall in front of us
+        }
+
+        // Until we are able to go back to regular wall following, we can adjust ourselves blindly.
+        if (millis() - left_millis_tracker > 900) turnRight(1.0);
+      } else if (millis() - left_millis_tracker > 1500) {
+        left_turning_sequence = 0; // If we've driven this long and found nothing we probably wont find anything
+        return;
+      }
     }
   }
 
-  if (rightTurnSensorCheckStart) {
-    if (((backtof - fronttof) <= -5)) {
-      rightTurnSensorCheckStart = false;
-      rightMotor.setSpeed(250, true);
-      leftMotor.setSpeed(250, true);
-      delay(70);
-    } else {
-      rightMotor.setSpeed(0, false);
-      leftMotor.setSpeed(100, true);
+  // -------------------------------------------------------------
+  // --- Right Turning -------------------------------------------
+  // -------------------------------------------------------------
+
+  if (left_turning_sequence == 0) {
+    // 0. Detect if we need to turn right by judging the distance of the front sensor.
+    if (right_turning_sequence == 0) {
+      if (FrontTOF <= 400) {
+        right_turning_sequence = 1; // Move to next sequence
+        leftMotor.setSpeed(200, true);
+        rightMotor.setSpeed(0, true);
+        right_millis_tracker = millis(); // Update the tracker with the start of our turn.
+      }
+    }
+
+    // Right turns can be context aware as there will always be a wall next to them.
+    // 1. Blindly turn to give the bot time to align both sensors on the new wall
+    if (right_turning_sequence == 1) {
+      if (millis() - right_millis_tracker > 2000) { // Move to the next phase after enough time has passed
+        right_turning_sequence = 2;
+      }
+    }
+
+    // 2. Now that both the sensors are on the same wall, monitor sensor balance for equalization and complete the turn.
+    if (right_turning_sequence == 2) {
+      int TOFOffset = LeftBackTOF - LeftFrontTOF;
+      if (TOFOffset <= 0) {
+        right_turning_sequence = 0;
+      }
     }
   }
-  // END OF DECISIONS
 }
