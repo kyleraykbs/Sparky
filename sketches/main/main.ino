@@ -68,10 +68,10 @@ float getang(float y1, float y2, float dist) {
   return atan(rise) * (180.0/pi);
 }
 
-#define SENSOR_DIST 150
+#define SENSOR_DIST 200
 #define MIDPOINTX 115
 #define MIDPOINTY -100
-#define MAX_ANGLE 12.0
+#define MAX_ANGLE 8.0
 #define WHEEL_SMOOTHING 3.0
 #define DESIRED_DISTANCE 130
 int SMOOTHING_START_DISTANCE_MM = DESIRED_DISTANCE / 1.25;
@@ -97,19 +97,13 @@ void setup() {
 
   Serial.println("\nAll VL53L0X initalized.\n");
 
-  lox1.setMeasurementTimingBudgetMicroSeconds(20000);
-  lox2.setMeasurementTimingBudgetMicroSeconds(20000);
-  lox3.setMeasurementTimingBudgetMicroSeconds(20000);
-}
+  lox1.setMeasurementTimingBudgetMicroSeconds(32000);
+  lox2.setMeasurementTimingBudgetMicroSeconds(32000);
+  lox3.setMeasurementTimingBudgetMicroSeconds(32000);
 
-void turnRight(float smoothing) {
+  // Spike the motors to get the bot moving.
   leftMotor.setSpeed(250, true);
-  rightMotor.setSpeed(100, true);
-}
-
-void turnLeft(float smoothing) {
   rightMotor.setSpeed(250, true);
-  leftMotor.setSpeed(100, true);
 }
 
 //TofTimings
@@ -183,8 +177,6 @@ void loop() {
 
   // END OF READINGS ==========
 
-
-
   // LOGIC ==========
   // --- WALL FOLLOWING
   if (!turning) { // Only wall follow when not doing a turn.
@@ -200,27 +192,31 @@ void loop() {
   
     if ((abs(wallAngle) >= currentMaxAngle)) {
       if (turningTowards) {
-        turnRight(1.0);
+        leftMotor.setSpeed(250, true);
+        rightMotor.setSpeed(80, true);
       } else {
-        turnLeft(1.0);
+        rightMotor.setSpeed(250, true);
+        leftMotor.setSpeed(110, true);
       }
     } else if (LeftOfDesiredDistance) {
-      turnRight(1.0);
+      leftMotor.setSpeed(250, true);
+      rightMotor.setSpeed(80, true);
     } else {
-      turnLeft(1.0);
+      rightMotor.setSpeed(250, true);
+      leftMotor.setSpeed(80, true);
     }
   }
 
   // -------------------------------------------------------------
   // --- Left Turning --------------------------------------------
   // -------------------------------------------------------------
-
+  int min_left_turn_distance = 400; // Distance which the left front sensor should initate a left turn at
   if (right_turning_sequence == 0) {
     // 0. Detect if we need to turn left by judging the distance of the left front sensor.
     if (left_turning_sequence == 0) {
-      if (LeftFrontTOF >= 500) {
+      if (LeftFrontTOF >= min_left_turn_distance) {
         leftMotor.setSpeed(0, true);
-        rightMotor.setSpeed(160, true);
+        rightMotor.setSpeed(180, true);
 
         left_millis_tracker = millis(); // Update the tracker with the start of our turn.
         left_turning_sequence = 1; // move to next sequence
@@ -230,12 +226,9 @@ void loop() {
     // Left turns will have time based progressions (WITHOUT DELAYS) to keep the rest of the loop functioning.
     // 1. Preprogrammed turn
     if (left_turning_sequence == 1) {
-      if (millis() - left_millis_tracker > 2200) { // Move to the next phase after we've roughly turned 90 degrees
+      if (millis() - left_millis_tracker > 2000) { // Move to the next phase after we've roughly turned 90 degrees
         leftMotor.setSpeed(250, true);
         rightMotor.setSpeed(250, true);
-        delay(40); // Yes, this is a delay... it's short enough where it doesn't matter.
-        leftMotor.setSpeed(150, true);
-        rightMotor.setSpeed(150, true);
 
         left_millis_tracker = millis();
         left_turning_sequence = 2;
@@ -247,14 +240,9 @@ void loop() {
       if (LeftFrontTOF < 450) {
         if (LeftBackTOF < 450) {
           left_turning_sequence = 0;
-          return; // Jump to the start of the loop so we dont instantly turn right if there is a wall in front of us
         }
-
-        // Until we are able to go back to regular wall following, we can adjust ourselves blindly.
-        if (millis() - left_millis_tracker > 900) turnRight(1.0);
-      } else if (millis() - left_millis_tracker > 1500) {
+      } else if (millis() - left_millis_tracker > 1200) {
         left_turning_sequence = 0; // If we've driven this long and found nothing we probably wont find anything
-        return;
       }
     }
   }
@@ -262,13 +250,22 @@ void loop() {
   // -------------------------------------------------------------
   // --- Right Turning -------------------------------------------
   // -------------------------------------------------------------
-
+  int min_right_turn_distance = 320; // Distance which the left front sensor should initate a left turn at
   if (left_turning_sequence == 0) {
     // 0. Detect if we need to turn right by judging the distance of the front sensor.
     if (right_turning_sequence == 0) {
       if (FrontTOF <= 400) {
+
+        // Do one more left reading so we can favor left turning.
+        LeftFrontTOF = tof2.readTOF(); // Front left
+        if (LeftFrontTOF >= min_left_turn_distance) {
+          leftMotor.setSpeed(0, true); // Stop the motors so we dont get any closer the the wall as to allow distance for the left turn that will happen next cycle
+          rightMotor.setSpeed(0, true);
+          return; // If we are at the proper distance to initate a left turn then restart the loop so the left turn code can run.
+        }
+
         right_turning_sequence = 1; // Move to next sequence
-        leftMotor.setSpeed(200, true);
+        leftMotor.setSpeed(180, true);
         rightMotor.setSpeed(0, true);
         right_millis_tracker = millis(); // Update the tracker with the start of our turn.
       }
@@ -277,7 +274,7 @@ void loop() {
     // Right turns can be context aware as there will always be a wall next to them.
     // 1. Blindly turn to give the bot time to align both sensors on the new wall
     if (right_turning_sequence == 1) {
-      if (millis() - right_millis_tracker > 2000) { // Move to the next phase after enough time has passed
+      if (millis() - right_millis_tracker > 2500) { // Move to the next phase after enough time has passed
         right_turning_sequence = 2;
       }
     }
