@@ -97,9 +97,9 @@ void setup() {
 
   Serial.println("\nAll VL53L0X initalized.\n");
 
-  lox1.setMeasurementTimingBudgetMicroSeconds(32000);
-  lox2.setMeasurementTimingBudgetMicroSeconds(32000);
-  lox3.setMeasurementTimingBudgetMicroSeconds(32000);
+  lox1.setMeasurementTimingBudgetMicroSeconds(10000);
+  lox2.setMeasurementTimingBudgetMicroSeconds(10000);
+  lox3.setMeasurementTimingBudgetMicroSeconds(10000);
 
   // Spike the motors to get the bot moving.
   leftMotor.setSpeed(250, true);
@@ -131,6 +131,10 @@ int right_turning_sequence = 0;
 long right_millis_tracker = 0;
 
 int start_millis = 0;
+
+// FIRE FIGHTING
+bool fireFightingMode = false;
+
 void loop() {
   // READINGS ========
   if (start_millis == 0) { start_millis = millis(); }
@@ -142,21 +146,6 @@ void loop() {
 
   // LIGHT SENSOR
   int lightsensorreading = analogRead(A11);
-  if (lightsensorreading > 280) {
-    if (!on_tape) {
-      on_tape = true;
-      in_room = !in_room;
-    }
-  } else if (on_tape) {
-    if (lightsensorreading < 190) {
-      on_tape = false;
-    }
-  }
-  if (in_room) {
-    digitalWrite(40, HIGH);
-  } else {
-    digitalWrite(40, LOW);
-  }
 
   // TOF READINGS
   LeftBackTOF = tof3.readTOF(); // Back left
@@ -178,7 +167,66 @@ void loop() {
   // END OF READINGS ==========
 
   // LOGIC ==========
-  // --- WALL FOLLOWING
+  // -------------------------------------------------------------
+  // --- Room Detection ------------------------------------------
+  // -------------------------------------------------------------
+  if (lightsensorreading > 280) {
+    if (!on_tape) {
+      on_tape = true;
+      in_room = !in_room;
+    }
+  } else if (on_tape) {
+    if (lightsensorreading < 190) {
+      on_tape = false;
+    }
+  }
+
+  if (in_room) { 
+    digitalWrite(40, HIGH); // Light up the BLUE LED if we are in a room.
+  } else {
+    digitalWrite(40, LOW);
+  }
+
+  // -------------------------------------------------------------
+  // --- Fire Detection ------------------------------------------
+  // -------------------------------------------------------------
+  if ((leftfirereading < 400) || (rightfirereading < 400)) {
+    if (in_room) { // Because of the sun... We should only enter fire fighting mode if in a room
+      fireFightingMode = true;
+    }
+  }
+
+  if (fireFightingMode) {
+    digitalWrite(50, HIGH); // Light up the RED LED if in fire fighting mode.
+
+    
+    if (!in_room) { // in_room will toggle after going over the fire fighting tape meaning we should stop in our tracks and turn the fan on.
+      rightMotor.setSpeed(0, true);
+      leftMotor.setSpeed(0, false);
+      digitalWrite(52, HIGH); // FAN
+    } else {
+      if (abs(leftfirereading - rightfirereading) >= 50) {
+        if (leftfirereading < rightfirereading) {
+          rightMotor.setSpeed(180, true);
+          leftMotor.setSpeed(0, false);
+        } 
+        
+        if (leftfirereading > rightfirereading) {
+          rightMotor.setSpeed(0, false);
+          leftMotor.setSpeed(180, true);
+        }
+      } else {
+        rightMotor.setSpeed(200, true);
+        leftMotor.setSpeed(200, true);
+      }
+    }
+  
+    return;
+  }
+
+  // -------------------------------------------------------------
+  // --- Wall Following ------------------------------------------
+  // -------------------------------------------------------------
   if (!turning) { // Only wall follow when not doing a turn.
     // calculate points for wall following
     float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOF, MIDPOINTX, MIDPOINTY);
@@ -193,17 +241,17 @@ void loop() {
     if ((abs(wallAngle) >= currentMaxAngle)) {
       if (turningTowards) {
         leftMotor.setSpeed(250, true);
-        rightMotor.setSpeed(80, true);
+        rightMotor.setSpeed(110, true);
       } else {
         rightMotor.setSpeed(250, true);
         leftMotor.setSpeed(110, true);
       }
     } else if (LeftOfDesiredDistance) {
       leftMotor.setSpeed(250, true);
-      rightMotor.setSpeed(80, true);
+      rightMotor.setSpeed(110, true);
     } else {
       rightMotor.setSpeed(250, true);
-      leftMotor.setSpeed(80, true);
+      leftMotor.setSpeed(110, true);
     }
   }
 
@@ -230,8 +278,8 @@ void loop() {
         leftMotor.setSpeed(250, true);
         rightMotor.setSpeed(250, true);
 
-        left_millis_tracker = millis();
         left_turning_sequence = 2;
+        left_millis_tracker = millis();
       }
     }
 
