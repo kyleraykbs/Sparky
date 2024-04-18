@@ -7,6 +7,7 @@
 #define LOX3_ADDRESS 0x32
 #define LOX4_ADDRESS 0x33
 
+#define SHT_LOX4 32
 #define SHT_LOX3 26
 #define SHT_LOX2 24
 #define SHT_LOX1 22
@@ -16,10 +17,12 @@
 Adafruit_VL53L0X lox1 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox3 = Adafruit_VL53L0X();
+Adafruit_VL53L0X lox4 = Adafruit_VL53L0X();
 
 TOF tof1(SHT_LOX1, LOX1_ADDRESS, &lox1);
 TOF tof2(SHT_LOX2, LOX2_ADDRESS, &lox2);
 TOF tof3(SHT_LOX3, LOX3_ADDRESS, &lox3);
+TOF tof4(SHT_LOX4, LOX4_ADDRESS, &lox4);
 
 MOTOR leftMotor(12, 11, 13);
 MOTOR rightMotor(9, 8, 10);
@@ -94,22 +97,24 @@ void setup() {
   tof1.initTOF(); // left front
   tof2.initTOF(); // front
   tof3.initTOF(); // left back
+  tof4.initTOF(); // left back
 
   Serial.println("\nAll VL53L0X initalized.\n");
 
-  lox1.setMeasurementTimingBudgetMicroSeconds(10000);
-  lox2.setMeasurementTimingBudgetMicroSeconds(10000);
-  lox3.setMeasurementTimingBudgetMicroSeconds(10000);
+  lox1.setMeasurementTimingBudgetMicroSeconds(20000);
+  lox2.setMeasurementTimingBudgetMicroSeconds(20000);
+  lox3.setMeasurementTimingBudgetMicroSeconds(20000);
 
   // Spike the motors to get the bot moving.
-  leftMotor.setSpeed(250, true);
-  rightMotor.setSpeed(250, true);
+  leftMotor.setSpeed(200, true);
+  rightMotor.setSpeed(200, true);
 }
 
 //TofTimings
 float LeftBackTOF;
-float LeftFrontTOF;
-float FrontTOF;
+float LeftFrontTOFLeft;
+float FrontTOFLeft;
+float FrontTOFRight;
 
 long lastBadDataFromFront = -5000;
 long lastBadDataFromLeft = -5000;
@@ -133,12 +138,21 @@ long right_millis_tracker = 0;
 int start_millis = 0;
 
 // FIRE FIGHTING
-bool fireFightingMode = false;
+int fire_fighting_sequence = 0;
+long fire_millis_tracker = 0;
+bool fire = false;
+
+// Return Home
+int return_sequence = 0 ;
+bool returningHome = false;
 
 void loop() {
+  // return;
   // READINGS ========
   if (start_millis == 0) { start_millis = millis(); }
   turning = false; if (left_turning_sequence > 0 || right_turning_sequence > 0) turning = true;
+  fire = false; if (fire_fighting_sequence > 0) fire = true;
+  returningHome = false; if (return_sequence > 0) returningHome = true;
 
   // FIRE SENSORS
   int rightfirereading = analogRead(A1);
@@ -149,19 +163,20 @@ void loop() {
 
   // TOF READINGS
   LeftBackTOF = tof3.readTOF(); // Back left
-  LeftFrontTOF = tof2.readTOF(); // Front left
-  FrontTOF = tof1.readTOF(); // front right 
-  if (FrontTOF >= 8000) {
+  LeftFrontTOFLeft = tof2.readTOF(); // Front left
+  FrontTOFLeft = tof1.readTOF();
+  FrontTOFRight = tof4.readTOF();
+  if (FrontTOFLeft >= 8000) {
     lastBadDataFromFront = millis();
   }
-  if (LeftFrontTOF >= 8000) {
+  if (LeftFrontTOFLeft >= 8000) {
     lastBadDataFromLeft = millis();
   }
   if ((millis() - lastBadDataFromLeft) <= badDataTimeoutMS) {
-    LeftFrontTOF = 7000;
+    LeftFrontTOFLeft = 7000;
   }
   if ((millis() - lastBadDataFromFront) <= badDataTimeoutMS) {
-    FrontTOF = 7000;
+    FrontTOFLeft = 7000;
   }
 
   // END OF READINGS ==========
@@ -170,13 +185,15 @@ void loop() {
   // -------------------------------------------------------------
   // --- Room Detection ------------------------------------------
   // -------------------------------------------------------------
-  if (lightsensorreading > 280) {
+  // Serial.println(lightsensorreading);
+  Serial.println(lightsensorreading);
+  if (lightsensorreading > 450) {
     if (!on_tape) {
       on_tape = true;
       in_room = !in_room;
     }
   } else if (on_tape) {
-    if (lightsensorreading < 190) {
+    if (lightsensorreading < 330) {
       on_tape = false;
     }
   }
@@ -188,49 +205,110 @@ void loop() {
   }
 
   // -------------------------------------------------------------
-  // --- Fire Detection ------------------------------------------
+  // --- Fire Fighting -------------------------------------------
   // -------------------------------------------------------------
-  if ((leftfirereading < 400) || (rightfirereading < 400)) {
-    if (in_room) { // Because of the sun... We should only enter fire fighting mode if in a room
-      fireFightingMode = true;
+
+  int ambient_room_without_fire = 475;
+  // 0. If we havent found a fire see if we can find one
+  if (fire_fighting_sequence == 0) {
+    if ((leftfirereading < ambient_room_without_fire) || (rightfirereading < ambient_room_without_fire)) { // lower readings means more fire based ir light
+      if (in_room) { // Because of the sun... We should only enter fire fighting mode if in a room
+        digitalWrite(50, LOW); // Dim the RED LED if not in fire fighting mode.
+        fire_fighting_sequence = 1;
+      }
     }
   }
 
-  if (fireFightingMode) {
-    digitalWrite(50, HIGH); // Light up the RED LED if in fire fighting mode.
+  // 1. Approach the fire until we find the tape next to it.
+  if (fire_fighting_sequence == 1) {  
+    if (abs(leftfirereading - rightfirereading) >= 50) {
+      if (leftfirereading < rightfirereading) {
+        rightMotor.setSpeed(180, true);
+        leftMotor.setSpeed(0, false);
+      } 
+      
+      if (leftfirereading > rightfirereading) {
+        rightMotor.setSpeed(0, false);
+        leftMotor.setSpeed(180, true);
+      }
+    } else {
+      rightMotor.setSpeed(200, true);
+      leftMotor.setSpeed(200, true);
+    }
 
-    
     if (!in_room) { // in_room will toggle after going over the fire fighting tape meaning we should stop in our tracks and turn the fan on.
       rightMotor.setSpeed(0, true);
-      leftMotor.setSpeed(0, false);
-      digitalWrite(52, HIGH); // FAN
-    } else {
-      if (abs(leftfirereading - rightfirereading) >= 50) {
-        if (leftfirereading < rightfirereading) {
-          rightMotor.setSpeed(180, true);
-          leftMotor.setSpeed(0, false);
-        } 
-        
-        if (leftfirereading > rightfirereading) {
-          rightMotor.setSpeed(0, false);
-          leftMotor.setSpeed(180, true);
-        }
-      } else {
-        rightMotor.setSpeed(200, true);
-        leftMotor.setSpeed(200, true);
-      }
+      leftMotor.setSpeed(0, true);
+      fire_fighting_sequence = 2;
     }
+
+    digitalWrite(50, HIGH); // Light up the RED LED if in fire fighting mode.
+  }
+
+  // 2. Extinguish the fire
+  if (fire_fighting_sequence == 2) {
+    digitalWrite(52, HIGH);
+    if (leftfirereading >= ambient_room_without_fire) {
+      if (fire_millis_tracker == 0) fire_millis_tracker = millis(); // If millis isn't set, set it so we can reference it to see how long we havent seen the fire for
+      if (millis() - fire_millis_tracker >= 10000) {
+        fire_fighting_sequence = 3; // If we havent seen the fire for X seconds then we assume its put out and we can move to phase 3
+      }
+    } else {
+      fire_millis_tracker = 0;
+    }
+  }
+
+  // 3. Start return sequence.
+  if (fire_fighting_sequence == 3) {
+    digitalWrite(52, LOW);
+    digitalWrite(50, LOW);
+    fire_fighting_sequence = 0;
+    return_sequence = 1;
+  }
+
+  // -------------------------------------------------------------
+  // --- Return Home ---------------------------------------------
+  // -------------------------------------------------------------
   
+  // 1. Align front to the wall
+  if (return_sequence == 1 && !fire) {
+    if (FrontTOFLeft < FrontTOFRight) {
+      leftMotor.setSpeed(180, false);
+      rightMotor.setSpeed(0, false);
+    } else {
+      rightMotor.setSpeed(180, false);
+      leftMotor.setSpeed(0, false);
+    }
+
+    if (FrontTOFLeft - FrontTOFRight >= 5 && FrontTOFLeft - FrontTOFRight <= 10) {
+      return_sequence = 2;
+    }
     return;
   }
 
+  // 2. Back up a certain distance
+  if (return_sequence == 2 && !fire) {
+    if (FrontTOFRight < 800) {
+      rightMotor.setSpeed(180, false);
+      leftMotor.setSpeed(180, false);
+    } else {
+      return_sequence = 3;
+    }
+    return;
+  }
+
+  // 3. Align with left wall
+  if (return_sequence == 3 && !fire) {
+    // Do nothing...
+    return;
+  }
   // -------------------------------------------------------------
   // --- Wall Following ------------------------------------------
   // -------------------------------------------------------------
-  if (!turning) { // Only wall follow when not doing a turn.
+  if (!turning && !fire) { // Only wall follow when not doing a turn.
     // calculate points for wall following
-    float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOF, MIDPOINTX, MIDPOINTY);
-    float wallAngle = getang(LeftBackTOF, LeftFrontTOF, SENSOR_DIST);
+    float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOFLeft, MIDPOINTX, MIDPOINTY);
+    float wallAngle = getang(LeftBackTOF, LeftFrontTOFLeft, SENSOR_DIST);
     bool turningTowards = wallAngle > 0;
     bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
     
@@ -259,10 +337,10 @@ void loop() {
   // --- Left Turning --------------------------------------------
   // -------------------------------------------------------------
   int min_left_turn_distance = 400; // Distance which the left front sensor should initate a left turn at
-  if (right_turning_sequence == 0) {
+  if (right_turning_sequence == 0 && !fire) {
     // 0. Detect if we need to turn left by judging the distance of the left front sensor.
     if (left_turning_sequence == 0) {
-      if (LeftFrontTOF >= min_left_turn_distance) {
+      if (LeftFrontTOFLeft >= min_left_turn_distance) {
         leftMotor.setSpeed(0, true);
         rightMotor.setSpeed(180, true);
 
@@ -285,11 +363,11 @@ void loop() {
 
     // 2. Search for wall with timeout (1500-2000 MS)
     if (left_turning_sequence == 2) {
-      if (LeftFrontTOF < 450) {
+      if (LeftFrontTOFLeft < 450) {
         if (LeftBackTOF < 450) {
           left_turning_sequence = 0;
         }
-      } else if (millis() - left_millis_tracker > 1200) {
+      } else if (millis() - left_millis_tracker > 1300) {
         left_turning_sequence = 0; // If we've driven this long and found nothing we probably wont find anything
       }
     }
@@ -298,15 +376,15 @@ void loop() {
   // -------------------------------------------------------------
   // --- Right Turning -------------------------------------------
   // -------------------------------------------------------------
-  int min_right_turn_distance = 320; // Distance which the left front sensor should initate a left turn at
-  if (left_turning_sequence == 0) {
+  int min_right_turn_distance = 280; // Distance which the left front sensor should initate a left turn at
+  if (left_turning_sequence == 0 && !fire) {
     // 0. Detect if we need to turn right by judging the distance of the front sensor.
     if (right_turning_sequence == 0) {
-      if (FrontTOF <= 400) {
+      if (FrontTOFLeft <= 400) {
 
         // Do one more left reading so we can favor left turning.
-        LeftFrontTOF = tof2.readTOF(); // Front left
-        if (LeftFrontTOF >= min_left_turn_distance) {
+        LeftFrontTOFLeft = tof2.readTOF(); // Front left
+        if (LeftFrontTOFLeft >= min_left_turn_distance) {
           leftMotor.setSpeed(0, true); // Stop the motors so we dont get any closer the the wall as to allow distance for the left turn that will happen next cycle
           rightMotor.setSpeed(0, true);
           return; // If we are at the proper distance to initate a left turn then restart the loop so the left turn code can run.
@@ -329,7 +407,7 @@ void loop() {
 
     // 2. Now that both the sensors are on the same wall, monitor sensor balance for equalization and complete the turn.
     if (right_turning_sequence == 2) {
-      int TOFOffset = LeftBackTOF - LeftFrontTOF;
+      int TOFOffset = LeftBackTOF - LeftFrontTOFLeft;
       if (TOFOffset <= 0) {
         right_turning_sequence = 0;
       }
