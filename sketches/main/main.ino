@@ -104,6 +104,7 @@ void setup() {
   lox1.setMeasurementTimingBudgetMicroSeconds(20000);
   lox2.setMeasurementTimingBudgetMicroSeconds(20000);
   lox3.setMeasurementTimingBudgetMicroSeconds(20000);
+  lox4.setMeasurementTimingBudgetMicroSeconds(20000);
 
   // Spike the motors to get the bot moving.
   leftMotor.setSpeed(200, true);
@@ -112,7 +113,7 @@ void setup() {
 
 //TofTimings
 float LeftBackTOF;
-float LeftFrontTOFLeft;
+float LeftFrontTOF;
 float FrontTOFLeft;
 float FrontTOFRight;
 
@@ -143,7 +144,8 @@ long fire_millis_tracker = 0;
 bool fire = false;
 
 // Return Home
-int return_sequence = 0 ;
+int return_sequence = 1;
+long return_millis_tracker = 0;
 bool returningHome = false;
 
 void loop() {
@@ -163,17 +165,17 @@ void loop() {
 
   // TOF READINGS
   LeftBackTOF = tof3.readTOF(); // Back left
-  LeftFrontTOFLeft = tof2.readTOF(); // Front left
+  LeftFrontTOF = tof2.readTOF(); // Front left
   FrontTOFLeft = tof1.readTOF();
   FrontTOFRight = tof4.readTOF();
   if (FrontTOFLeft >= 8000) {
     lastBadDataFromFront = millis();
   }
-  if (LeftFrontTOFLeft >= 8000) {
+  if (LeftFrontTOF >= 8000) {
     lastBadDataFromLeft = millis();
   }
   if ((millis() - lastBadDataFromLeft) <= badDataTimeoutMS) {
-    LeftFrontTOFLeft = 7000;
+    LeftFrontTOF = 7000;
   }
   if ((millis() - lastBadDataFromFront) <= badDataTimeoutMS) {
     FrontTOFLeft = 7000;
@@ -273,42 +275,62 @@ void loop() {
   // 1. Align front to the wall
   if (return_sequence == 1 && !fire) {
     if (FrontTOFLeft < FrontTOFRight) {
-      leftMotor.setSpeed(180, false);
+      leftMotor.setSpeed(160, false);
       rightMotor.setSpeed(0, false);
     } else {
-      rightMotor.setSpeed(180, false);
+      rightMotor.setSpeed(160, false);
       leftMotor.setSpeed(0, false);
     }
 
-    if (FrontTOFLeft - FrontTOFRight >= 5 && FrontTOFLeft - FrontTOFRight <= 10) {
+    if (FrontTOFRight > 500) {
       return_sequence = 2;
     }
     return;
   }
 
-  // 2. Back up a certain distance
+  // 2. Align with left wall
   if (return_sequence == 2 && !fire) {
-    if (FrontTOFRight < 800) {
-      rightMotor.setSpeed(180, false);
-      leftMotor.setSpeed(180, false);
+    if (LeftFrontTOF > LeftBackTOF) {
+      leftMotor.setSpeed(160, false);
+      rightMotor.setSpeed(0, false);
     } else {
+      rightMotor.setSpeed(160, false);
+      leftMotor.setSpeed(0, false);
+    }
+
+    if (LeftFrontTOF - LeftBackTOF < 10 && LeftFrontTOF - LeftBackTOF > -10) {
+      return_millis_tracker = millis();
+      leftMotor.setSpeed(170, true);
+      rightMotor.setSpeed(130, false);
       return_sequence = 3;
+    }
+
+    return;
+  }
+
+  // 3. Rotate
+  if (return_sequence == 3 && !fire) {
+    if (millis() - return_millis_tracker >= 1850) {
+      leftMotor.setSpeed(0, true);
+      rightMotor.setSpeed(0, true);
+      return_sequence = 4;
     }
     return;
   }
 
-  // 3. Align with left wall
-  if (return_sequence == 3 && !fire) {
-    // Do nothing...
+  // 4. Transition to wall follow routine.
+  if (return_sequence == 4 && !fire) {
+
     return;
   }
+
   // -------------------------------------------------------------
   // --- Wall Following ------------------------------------------
   // -------------------------------------------------------------
   if (!turning && !fire) { // Only wall follow when not doing a turn.
     // calculate points for wall following
-    float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOFLeft, MIDPOINTX, MIDPOINTY);
-    float wallAngle = getang(LeftBackTOF, LeftFrontTOFLeft, SENSOR_DIST);
+    float closestY = closestPointOnLine(0, LeftBackTOF, SENSOR_DIST, LeftFrontTOF, MIDPOINTX, MIDPOINTY);
+    float wallAngle = getang(LeftBackTOF, LeftFrontTOF, SENSOR_DIST);
     bool turningTowards = wallAngle > 0;
     bool LeftOfDesiredDistance = (closestY - DESIRED_DISTANCE) < 0;
     
@@ -340,7 +362,7 @@ void loop() {
   if (right_turning_sequence == 0 && !fire) {
     // 0. Detect if we need to turn left by judging the distance of the left front sensor.
     if (left_turning_sequence == 0) {
-      if (LeftFrontTOFLeft >= min_left_turn_distance) {
+      if (LeftFrontTOF >= min_left_turn_distance) {
         leftMotor.setSpeed(0, true);
         rightMotor.setSpeed(180, true);
 
@@ -363,7 +385,7 @@ void loop() {
 
     // 2. Search for wall with timeout (1500-2000 MS)
     if (left_turning_sequence == 2) {
-      if (LeftFrontTOFLeft < 450) {
+      if (LeftFrontTOF < 450) {
         if (LeftBackTOF < 450) {
           left_turning_sequence = 0;
         }
@@ -383,8 +405,8 @@ void loop() {
       if (FrontTOFLeft <= 400) {
 
         // Do one more left reading so we can favor left turning.
-        LeftFrontTOFLeft = tof2.readTOF(); // Front left
-        if (LeftFrontTOFLeft >= min_left_turn_distance) {
+        LeftFrontTOF = tof2.readTOF(); // Front left
+        if (LeftFrontTOF >= min_left_turn_distance) {
           leftMotor.setSpeed(0, true); // Stop the motors so we dont get any closer the the wall as to allow distance for the left turn that will happen next cycle
           rightMotor.setSpeed(0, true);
           return; // If we are at the proper distance to initate a left turn then restart the loop so the left turn code can run.
@@ -407,7 +429,7 @@ void loop() {
 
     // 2. Now that both the sensors are on the same wall, monitor sensor balance for equalization and complete the turn.
     if (right_turning_sequence == 2) {
-      int TOFOffset = LeftBackTOF - LeftFrontTOFLeft;
+      int TOFOffset = LeftBackTOF - LeftFrontTOF;
       if (TOFOffset <= 0) {
         right_turning_sequence = 0;
       }
