@@ -132,6 +132,7 @@ bool turning = false;
 
 int left_turning_sequence = 0;
 long left_millis_tracker = 0;
+bool second_left_turn_in_a_row = false;
 
 int right_turning_sequence = 0;
 long right_millis_tracker = 0;
@@ -168,10 +169,14 @@ void loop() {
   int lightsensorreading = analogRead(A11);
 
   // TOF READINGS
-  LeftBackTOF = tof3.readTOF(); // Back left
-  LeftFrontTOF = tof2.readTOF(); // Front left
-  FrontTOFLeft = tof1.readTOF();
-  FrontTOFRight = tof4.readTOF();
+  if (left_turning_sequence != 2) { // Only read sensors when its not redundant to.
+    LeftBackTOF = tof3.readTOF();
+    LeftFrontTOF = tof2.readTOF();
+  }
+  if (right_turning_sequence != 2 ) {
+    FrontTOFLeft = tof1.readTOF();
+    FrontTOFRight = tof4.readTOF();
+  }
   if (FrontTOFLeft >= 8000) {
     lastBadDataFromFront = millis();
   }
@@ -191,8 +196,8 @@ void loop() {
   // -------------------------------------------------------------
   // --- Room Detection ------------------------------------------
   // -------------------------------------------------------------
+
   // Serial.println(lightsensorreading);
-  Serial.println(lightsensorreading);
   if (lightsensorreading > 450) {
     if (!on_tape) {
       on_tape = true;
@@ -227,19 +232,14 @@ void loop() {
 
   // 1. Approach the fire until we find the tape next to it.
   if (fire_fighting_sequence == 1) {  
-    if (abs(leftfirereading - rightfirereading) >= 50) {
-      if (leftfirereading < rightfirereading) {
-        rightMotor.setSpeed(180, true);
-        leftMotor.setSpeed(0, false);
-      } 
-      
-      if (leftfirereading > rightfirereading) {
-        rightMotor.setSpeed(0, false);
-        leftMotor.setSpeed(180, true);
-      }
-    } else {
-      rightMotor.setSpeed(200, true);
-      leftMotor.setSpeed(200, true);
+    if (leftfirereading < rightfirereading) {
+      rightMotor.setSpeed(160, true);
+      leftMotor.setSpeed(0, false);
+    } 
+    
+    if (leftfirereading > rightfirereading) {
+      rightMotor.setSpeed(0, false);
+      leftMotor.setSpeed(160, true);
     }
 
     if (!in_room) { // in_room will toggle after going over the fire fighting tape meaning we should stop in our tracks and turn the fan on.
@@ -332,42 +332,80 @@ void loop() {
   // --- Left Turning --------------------------------------------
   // -------------------------------------------------------------
   int min_left_turn_distance = 400; // Distance which the left front sensor should initate a left turn at
-  if (right_turning_sequence == 0 && !fire) {
+  bool back_up_before_left = true;
+  if (!fire) {
     // 0. Detect if we need to turn left by judging the distance of the left front sensor.
     if (left_turning_sequence == 0) {
       if (LeftFrontTOF >= min_left_turn_distance) {
         LeftFrontTOF = tof2.readTOF(); // Read it again to be sure.
         if (LeftFrontTOF >= min_left_turn_distance) {
+          if (back_up_before_left && !second_left_turn_in_a_row) {
+            leftMotor.setSpeed(180, false);
+            rightMotor.setSpeed(180, false);
+            delay(250);
+          }
           leftMotor.setSpeed(0, true);
           rightMotor.setSpeed(180, true);
 
           left_millis_tracker = millis(); // Update the tracker with the start of our turn.
           left_turning_sequence = 1; // move to next sequence
         }
+      } else {
+        second_left_turn_in_a_row = false; // Disaable the left turn marker if the conditions weren't met.
       }
     }
 
     // Left turns will have time based progressions (WITHOUT DELAYS) to keep the rest of the loop functioning.
     // 1. Preprogrammed turn
     if (left_turning_sequence == 1) {
-      if (millis() - left_millis_tracker > 1600) { // Move to the next phase after we've roughly turned 90 degrees
-        leftMotor.setSpeed(250, true);
-        rightMotor.setSpeed(250, true);
-
+      if (millis() - left_millis_tracker > 1580) { // Move to the next phase after we've roughly turned 90 degrees
         left_turning_sequence = 2;
         left_millis_tracker = millis();
       }
     }
 
-    // 2. Search for wall with timeout (1500-2000 MS)
+    // 2. If within reasonable bounds we can keep turning until we get alignment with the wall
     if (left_turning_sequence == 2) {
+      if (FrontTOFLeft > 700 || FrontTOFRight > 700) { // If our sensors are beyond this distance we can start getting errors so its best to move to the next phase, hoping that we actually managed to turn.
+        leftMotor.setSpeed(250, true);
+        rightMotor.setSpeed(250, true);
+        left_turning_sequence = 3;
+        left_millis_tracker = millis();
+      }
+
+      if (abs(FrontTOFLeft - FrontTOFRight) < 20) { // Check alignment
+        leftMotor.setSpeed(250, true);
+        rightMotor.setSpeed(250, true);
+        left_turning_sequence = 3;
+        left_millis_tracker = millis();
+      }
+    }
+
+    // 3. Search for wall with timeout (500-2000 MS)
+    if (left_turning_sequence == 3) {
       LeftFrontTOF = tof2.readTOF(); // Front left
-      if (LeftFrontTOF < min_left_turn_distance) {
+      if (LeftFrontTOF < min_left_turn_distance || second_left_turn_in_a_row || in_room) { // if we see a wall or this is our second left turn in a row keep moving until our back sensor hits the wall
+        
         if (LeftBackTOF < min_left_turn_distance) {
+          digitalWrite(40, HIGH); // TEMP TESTING.
           left_turning_sequence = 0;
+        }
+        if (LeftFrontTOF < min_left_turn_distance || in_room) {
+          leftMotor.setSpeed(250, true);
+          rightMotor.setSpeed(150, true);
+        } else {
+          leftMotor.setSpeed(250, true);
+          rightMotor.setSpeed(250, true);
         }
       } else if (millis() - left_millis_tracker > 800) {
         left_turning_sequence = 0; // If we've driven this long and found nothing we probably wont find anything
+        leftMotor.setSpeed(250, false);
+        rightMotor.setSpeed(250, false);
+        delay(250);
+        leftMotor.setSpeed(0, true);
+        rightMotor.setSpeed(0, true);
+        second_left_turn_in_a_row = true; // Track the fact we are going to need to do another left turn
+        return; // After backing up, jump to the start to see if we can make another left turn.
       }
     }
   }
@@ -375,11 +413,11 @@ void loop() {
   // -------------------------------------------------------------
   // --- Right Turning -------------------------------------------
   // -------------------------------------------------------------
-  int min_right_turn_distance = 400; // Distance which the left front sensor should initate a left turn at
+  int min_right_turn_distance = 400; // Distance which the left front sensor should initate a right turn at
   if (left_turning_sequence == 0 && !fire) {
     // 0. Detect if we need to turn right by judging the distance of the front sensor.
     if (right_turning_sequence == 0) {
-      if (FrontTOFLeft <= min_right_turn_distance) {
+      if (FrontTOFRight <= min_right_turn_distance) {
 
         // Do one more left reading so we can favor left turning.
         LeftFrontTOF = tof2.readTOF(); // Front left
@@ -399,7 +437,7 @@ void loop() {
     // Right turns can be context aware as there will always be a wall next to them.
     // 1. Blindly turn to give the bot time to align both sensors on the new wall
     if (right_turning_sequence == 1) {
-      if (millis() - right_millis_tracker > 1800) { // Move to the next phase after enough time has passed
+      if (millis() - right_millis_tracker > 2000) { // Move to the next phase after enough time has passed
         right_turning_sequence = 2;
       }
     }
@@ -413,7 +451,7 @@ void loop() {
     }
   }
 
-  update_state_vars(); // Update state so we dont wall follow if in a turn now.
+  update_state_vars(); // Update state so we dont wall follow if in a turn.
 
   // -------------------------------------------------------------
   // --- Wall Following ------------------------------------------
